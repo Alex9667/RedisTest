@@ -5,8 +5,10 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Rendering;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Distributed;
 using RedisTestApp.Data;
 using RedisTestApp.Models;
+using System.Text.Json;
 
 namespace RedisTestApp.Controllers
 {
@@ -14,18 +16,15 @@ namespace RedisTestApp.Controllers
     {
         private readonly RedisTestAppContext _context;
 
-        public ProductsController(RedisTestAppContext context)
+        private readonly IDistributedCache _cache;
+
+        public ProductsController(RedisTestAppContext context, IDistributedCache cache)
         {
             _context = context;
+            _cache = cache;
         }
 
         // GET: Products
-        public async Task<IActionResult> Index()
-        {
-            return View(await _context.Product.ToListAsync());
-        }
-
-        // GET: Products/Details/5
         public async Task<IActionResult> Details(int? id)
         {
             if (id == null)
@@ -33,14 +32,43 @@ namespace RedisTestApp.Controllers
                 return NotFound();
             }
 
-            var product = await _context.Product
-                .FirstOrDefaultAsync(m => m.Id == id);
+            var product = await _context.Product.FindAsync(id);
             if (product == null)
             {
                 return NotFound();
             }
 
             return View(product);
+        }
+
+        // GET: Products/Details/5
+        public async Task<IActionResult> Index(int? i)
+        {
+            const string cacheKey = "ProductList";
+            string serializedProducts;
+            IEnumerable<Product> products;
+
+            // get  data from  cache
+            var cachedProducts = await _cache.GetStringAsync(cacheKey);
+
+            if (cachedProducts != null)
+            {
+                serializedProducts = cachedProducts;
+                products = JsonSerializer.Deserialize<IEnumerable<Product>>(serializedProducts);
+            }
+            else
+            {
+                products = await _context.Product.ToListAsync();
+
+                // Serialize and cache the data
+                serializedProducts = JsonSerializer.Serialize(products);
+                var options = new DistributedCacheEntryOptions()
+                    .SetAbsoluteExpiration(TimeSpan.FromMinutes(30)) // Cache expiration - will expire no matter what
+                    .SetSlidingExpiration(TimeSpan.FromMinutes(10)); // Sliding expiration - will expire after set time if not used
+                await _cache.SetStringAsync(cacheKey, serializedProducts, options);
+            }
+
+            return View(products);
         }
 
         // GET: Products/Create
@@ -60,6 +88,9 @@ namespace RedisTestApp.Controllers
             {
                 _context.Add(product);
                 await _context.SaveChangesAsync();
+
+                await _cache.RemoveAsync("ProductList");
+
                 return RedirectToAction(nameof(Index));
             }
             return View(product);

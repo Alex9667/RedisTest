@@ -1,6 +1,8 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using RedisTestApp.Data;
+
+
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDbContext<RedisTestAppContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("RedisTestAppContext") ?? throw new InvalidOperationException("Connection string 'RedisTestAppContext' not found.")));
@@ -8,7 +10,23 @@ builder.Services.AddDbContext<RedisTestAppContext>(options =>
 // Add services to the container.
 builder.Services.AddControllersWithViews();
 
+builder.Services.AddScoped<Seeder>();
+
+
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = "localhost:6379";
+    options.InstanceName = "RedisTestApp_"; 
+});
+
+
 var app = builder.Build();
+
+using (var scope = app.Services.CreateScope())
+{
+    var seeder = scope.ServiceProvider.GetRequiredService<Seeder>();
+    await seeder.Seed();
+}
 
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())
